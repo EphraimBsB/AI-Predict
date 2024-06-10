@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
+import 'package:tflite_flutter/tflite_flutter.dart';
 
 void main() {
   runApp(const MyApp());
@@ -30,8 +32,19 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   File? image;
-
+  late Interpreter interpreter;
   bool result = false;
+  double? prediction;
+
+  @override
+  void initState() {
+    super.initState();
+    loadModel();
+  }
+
+  loadModel() async {
+    interpreter = await Interpreter.fromAsset('assets/model.tflite');
+  }
 
   Future pickImage(ImageSource source) async {
     try {
@@ -39,10 +52,34 @@ class _HomePageState extends State<HomePage> {
       if (image == null) return;
 
       final imageTemporary = File(image.path);
-      setState(() => this.image = imageTemporary);
+      setState(() {
+        this.image = imageTemporary;
+        result = false;
+      });
     } on PlatformException catch (e) {
       print('Faild to pick image $e');
     }
+  }
+
+  predictImage() async {
+    var imageBytes = await image!.readAsBytes();
+    var decodedImage = img.decodeImage(imageBytes);
+    var resizedImage = img.copyResize(decodedImage!, height: 256, width: 256);
+    double probability;
+    List input = List.generate(
+            1 * 256 * 256 * 3, (i) => resizedImage.getBytes()[i] / 255.0)
+        .reshape([1, 256, 256, 3]);
+    var output = List.filled(1 * 1, 0).reshape([1, 1]);
+
+    // input = input.reshape([1, 224, 224, 3]); // Reshape the input tensor
+    // print("INPUT RESHAPE===> $input");
+    interpreter.run(input, output);
+    print("OUTPUT===> ${output.first}");
+    probability = output[0][0];
+    double prob = probability * 100;
+    setState(() {
+      prediction = double.parse(prob.toStringAsFixed(2));
+    });
   }
 
   @override
@@ -55,15 +92,43 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             image != null
-                ? Image.file(
-                    image!,
-                    height: 220,
-                    width: double.infinity,
+                ? Column(
+                    children: [
+                      const Text(
+                        'Cassava Stem Scanner',
+                        style: TextStyle(
+                            fontSize: 24.0, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(
+                        height: 30.0,
+                      ),
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 20.0),
+                        decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12.0)),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12.0),
+                          child: Image.file(
+                            image!,
+                            height: MediaQuery.of(context).size.height * 0.4,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                    ],
                   )
                 : const Column(
                     children: [
+                      CircleAvatar(
+                        backgroundImage: AssetImage('assets/image.png'),
+                        radius: 50,
+                      ),
+                      SizedBox(
+                        height: 10.0,
+                      ),
                       Text(
-                        'AI Image Predict',
+                        'Cassava Stem Scanner',
                         style: TextStyle(
                             fontSize: 24, fontWeight: FontWeight.w600),
                       ),
@@ -86,10 +151,10 @@ class _HomePageState extends State<HomePage> {
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.only(bottom: 20.0),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
+                    const Text(
                       'Results:',
                       style:
                           TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
@@ -97,13 +162,13 @@ class _HomePageState extends State<HomePage> {
                     Text.rich(
                       TextSpan(
                         children: [
-                          TextSpan(
+                          const TextSpan(
                             text: 'Health: ',
                             style: TextStyle(fontSize: 14, color: Colors.grey),
                           ),
                           TextSpan(
-                            text: 'Healthy',
-                            style: TextStyle(
+                            text: prediction! < 50 ? 'Healthy' : 'Unhealthy',
+                            style: const TextStyle(
                                 fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                         ],
@@ -112,13 +177,15 @@ class _HomePageState extends State<HomePage> {
                     Text.rich(
                       TextSpan(
                         children: [
-                          TextSpan(
-                            text: 'Accuracy: ',
+                          const TextSpan(
+                            text: 'Probability: ',
                             style: TextStyle(fontSize: 14, color: Colors.grey),
                           ),
                           TextSpan(
-                            text: '99.9%',
-                            style: TextStyle(
+                            text: prediction! < 50
+                                ? '${100 - prediction!} %'
+                                : '$prediction %',
+                            style: const TextStyle(
                                 fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                         ],
@@ -176,11 +243,12 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
             const SizedBox(
-              height: 40.0,
+              height: 30.0,
             ),
             InkWell(
               onTap: image != null
-                  ? () {
+                  ? () async {
+                      await predictImage();
                       setState(() {
                         result = !result;
                       });
